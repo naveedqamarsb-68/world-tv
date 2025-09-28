@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>World TV – m3u playlist player</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+</head>
+<body>
+  <header>
+    <h1>📺 World TV</h1>
+    <input id="search" type="search" placeholder="Search channels…" autocomplete="off"/>
+    <input id="m3uFile" type="file" accept=".m3u,.m3u8"/>
+  </header>
+
+  <main>
+    <section id="player_wrapper">
+      <video id="player" controls autoplay></video>
+      <p id="nowPlaying">Choose a channel to start</p>
+    </section>
+
+    <aside id="sidebar">
+      <h2>Channels</h2>
+      <div id="filters">
+        <select id="groupFilter">
+          <option value="">All groups</option>
+        </select>
+        <select id="countryFilter">
+          <option value="">All countries</option>
+        </select>
+      </div>
+      <ul id="channelList"></ul>
+    </aside>
+  </main>
+
+  <script src="js/hls.min.js"></script>
+  <script src="js/m3u-parser.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html> add
+// returns [{name, logo, group, country, url}]
+export function parseM3U(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const channels = [];
+  let current = {};
+
+  for (const raw of lines) {
+    if (raw.startsWith('#EXTINF:')) {
+      const info = raw.slice(8);           // remove "#EXTINF:"
+      const tvgLogo = (info.match(/tvg-logo="([^"]+)"/) || [])[1];
+      const groupTitle = (info.match(/group-title="([^"]+)"/) || [])[1];
+      const tvgCountry = (info.match(/tvg-country="([^"]+)"/) || [])[1];
+      const name = raw.split(',').pop().trim();
+      current = { name, logo: tvgLogo||'', group: groupTitle||'', country: tvgCountry||'' };
+    } else if (raw.startsWith('http')) {
+      current.url = raw;
+      channels.push(current);
+      current = {};
+    }
+  }
+  return channels;
+}
+import { parseM3U } from './m3u-parser.js';
+
+const video = document.getElementById('player');
+const nowPlaying = document.getElementById('nowPlaying');
+const channelList = document.getElementById('channelList');
+const searchBox = document.getElementById('search');
+const groupSel = document.getElementById('groupFilter');
+const countrySel = document.getElementById('countryFilter');
+const fileInput = document.getElementById('m3uFile');
+
+let allChannels = [];
+let favorites = JSON.parse(localStorage.getItem('fav')||'[]');
+
+fileInput.addEventListener('change', async e => {
+  const text = await e.target.files[0].text();
+  allChannels = parseM3U(text);
+  populateFilters();
+  render();
+});
+
+searchBox.addEventListener('input', render);
+[groupSel, countrySel].forEach(s => s.addEventListener('change', render));
+
+function populateFilters() {
+  const groups = new Set(allChannels.map(ch => ch.group).filter(Boolean));
+  const countries = new Set(allChannels.map(ch => ch.country).filter(Boolean));
+  fillSelect(groupSel, [...groups].sort());
+  fillSelect(countrySel, [...countries].sort());
+}
+function fillSelect(sel, arr) {
+  sel.innerHTML = '<option value="">All ' + sel.id.replace('Filter','').toLowerCase() + '</option>';
+  arr.forEach(v => sel.insertAdjacentHTML('beforeend', `<option>${v}</option>`));
+}
+
+function render() {
+  const q = searchBox.value.toLowerCase();
+  const g = groupSel.value;
+  const c = countrySel.value;
+  const filtered = allChannels.filter(ch =>
+    (!q || ch.name.toLowerCase().includes(q)) &&
+    (!g || ch.group === g) &&
+    (!c || ch.country === c)
+  );
+  channelList.innerHTML = '';
+  filtered.forEach(ch => {
+    const li = document.createElement('li');
+    li.innerHTML = `
+      <img src="${ch.logo}" alt="" onerror="this.style.display='none'"/>
+      <span>${ch.name}</span>
+      <button class="play" data-url="${ch.url}">▶</button>
+      <button class="fav" data-name="${ch.name}">${favorites.includes(ch.name)?'❤️':'🤍'}</button>
+    `;
+    channelList.appendChild(li);
+  });
+  attachPlayButtons();
+  attachFavButtons();
+}
+
+function attachPlayButtons() {
+  document.querySelectorAll('button.play').forEach(btn =>
+    btn.addEventListener('click', e => play(e.target.dataset.url, e.target.parentElement.querySelector('span').textContent))
+  );
+}
+function attachFavButtons() {
+  document.querySelectorAll('button.fav').forEach(btn =>
+    btn.addEventListener('click', e => {
+      const name = e.target.dataset.name;
+      if (favorites.includes(name)) favorites = favorites.filter(f => f !== name);
+      else favorites.push(name);
+      localStorage.setItem('fav', JSON.stringify(favorites));
+      render();
+    })
+  );
+}
+
+function play(url, name) {
+  nowPlaying.textContent = 'Now playing: ' + name;
+  if (Hls.isSupported() && url.includes('.m3u8')) {
+    const hls = new Hls();
+    hls.loadSource(url);
+    hls.attachMedia(video);
+  } else {
+    video.src = url;
+  }
+}
+:root{--bg:#111;--fg:#eee;--accent:#0ebeff}
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,Arial}
+body{background:var(--bg);color:var(--fg);display:flex;flex-direction:column;height:100vh}
+header{display:flex;gap:1rem;padding:.8rem;background:#000}
+header input[type=search]{flex:1}
+main{display:flex;flex:1;overflow:hidden}
+#player_wrapper{flex:2;display:flex;flex-direction:column}
+video{width:100%;flex:1;background:#000}
+#sidebar{flex:1;overflow-y:auto;background:#1a1a1a;padding:1rem}
+#channelList{list-style:none}
+#channelList li{display:flex;align-items:center;gap:.5rem;padding:.4rem;border-bottom:1px solid #333}
+#channelList img{height:24px;width:auto}
+button{background:none;border:none;color:var(--accent);cursor:pointer;font-size:1.2rem}
+button.fav{margin-left:auto}
